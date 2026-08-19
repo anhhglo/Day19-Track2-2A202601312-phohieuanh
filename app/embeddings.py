@@ -27,6 +27,28 @@ import numpy as np
 
 DEFAULT_BACKEND = "fastembed"
 
+# ONNX Runtime defaults to one intra-op thread per core. For a SINGLE short
+# query that is the classic latency anti-pattern: the model is far too small to
+# fill 20 cores, so thread fan-out/join dominates the actual matmuls. Measured
+# on this 20-core host (50 golden queries x 3 reps, warm):
+#
+#     threads=4      p50 20.6 ms   p99 29.2 ms      1000-doc index ~128 s
+#     threads=8      p50 20.8 ms   p99 28.9 ms      1000-doc index ~129 s
+#     unbounded      p50 33.0 ms   p99 54.1 ms      1000-doc index ~199 s
+#
+# Bounding it is faster on BOTH axes -- there is no throughput/latency trade to
+# make here, oversubscription simply loses. The cap is 8 rather than 4 so a
+# clean 4-8 core laptop keeps every core; only many-core hosts are held back.
+# Override with EMBED_THREADS if you are profiling.
+DEFAULT_THREAD_CAP = 8
+
+
+def embed_threads() -> int:
+    raw = os.getenv("EMBED_THREADS")
+    if raw:
+        return max(1, int(raw))
+    return max(1, min(DEFAULT_THREAD_CAP, os.cpu_count() or DEFAULT_THREAD_CAP))
+
 
 @dataclass(frozen=True)
 class BackendSpec:
@@ -39,6 +61,14 @@ class BackendSpec:
 BACKENDS: dict[str, BackendSpec] = {
     "fastembed": BackendSpec("BAAI/bge-small-en-v1.5", 384, "fastembed",
                              "English-focused; weak on Vietnamese paraphrase (that is the NB2 lesson)"),
+    # Added for the NB2 embedding experiment: the cheapest way to test the
+    # "is the model or the fusion the problem?" question. Same 384 dims and
+    # roughly the same per-query cost as bge-small, but multilingual -- so it
+    # isolates *language coverage* from *model size*, which comparing against
+    # a 1024-dim 2.2 GB model cannot do.
+    "multilingual-small": BackendSpec(
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", 384, "fastembed",
+        "Multilingual (VN included), 384d, ~0.22 GB — same latency class as bge-small"),
     "multilingual": BackendSpec("intfloat/multilingual-e5-large", 1024, "fastembed",
                                 "Multilingual, no extra dependency, ~2.2 GB download"),
     "bge-m3": BackendSpec("BAAI/bge-m3", 1024, "sentence-transformers",
@@ -77,7 +107,8 @@ class Embedder:
         p = self.spec.provider
         if p == "fastembed":
             from fastembed import TextEmbedding
-            self._impl = TextEmbedding(model_name=self.spec.model)
+            self._impl = TextEmbedding(model_name=self.spec.model,
+                                       threads=embed_threads())
         elif p == "sentence-transformers":
             try:
                 from sentence_transformers import SentenceTransformer

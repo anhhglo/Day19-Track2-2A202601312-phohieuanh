@@ -31,13 +31,16 @@ from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
+from app.embeddings import embed_threads
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 
 from app.cache import SemanticCache
 
 DATA = Path(_setup.__file__).resolve().parent.parent / "data"
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+EMBED_THREADS = embed_threads()
+embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5",
+                         threads=EMBED_THREADS)   # xem NB1 §2
 client = QdrantClient(":memory:")
 
 # %% [markdown]
@@ -114,6 +117,35 @@ for th in (0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95):
 #
 # > Không có ngưỡng đúng phổ quát. 0,75 là **điểm bắt đầu để đo**, không phải
 # > hằng số để copy. Phân bố query của bạn quyết định con số cuối cùng.
+#
+# ### Ngưỡng tôi chọn cho corpus này: **0,85**
+#
+# Đọc thẳng từ bảng vừa in ra:
+#
+# | ngưỡng | tiết kiệm | trả lời sai | kết luận |
+# |---|---|---|---|
+# | 0,75 (số của AWS) | 100% | **36%** | hơn một phần ba số hit là câu trả lời của **câu hỏi khác** |
+# | 0,80 | 100% | 5% | vẫn còn sai, chỉ là hiếm hơn — loại lỗi khó phát hiện nhất |
+# | **0,85** | **100%** | **0%** | **giữ trọn phần tiết kiệm, không còn false hit** |
+# | 0,90 | 96% | 0% | mất 4% tiết kiệm mà không mua thêm được an toàn nào |
+# | 0,95 | 53% | 0% | mất một nửa tiết kiệm — trả tiền cho thứ 0,85 đã cho |
+#
+# **Vì sao 0,75 chưa đủ ở đây, dù AWS đo được 86% giảm chi phí ở đúng con số đó.**
+# Ngưỡng không phải thuộc tính của cache, nó là thuộc tính của **khoảng cách giữa
+# các query trong tập của bạn**. Corpus lab này có 10 chủ đề và 50 câu hỏi sinh từ
+# cùng một bộ từ vựng, nên hai câu *khác chủ đề* vẫn nằm rất gần nhau trong không
+# gian 384 chiều của một model **tiếng Anh** đọc văn bản **tiếng Việt** — cùng thứ
+# làm NB2 tụt điểm ở slice `paraphrase`. Query của AWS trải rộng hơn nhiều nên
+# 0,75 đã đủ tách. Sao chép hằng số của họ mà không chạy lại sweep là nhập khẩu
+# **phân bố query của họ** — thứ mình không có.
+#
+# Hệ quả kèm theo: đổi embedding model là **phải sweep lại**. Ngưỡng 0,85 gắn với
+# `bge-small-en-v1.5`, không phải với ý tưởng "semantic cache".
+#
+# Và lưu ý cột `tiết kiệm` giữ 100% tới tận 0,85 chỉ vì probe positive ở đây là
+# biến thể nhẹ (thêm tiền tố, bỏ một từ). Với người dùng thật, diễn đạt lại xa
+# hơn nhiều, nên đường cong đó sẽ tụt sớm hơn — lý do phải đo trên log thật chứ
+# không phải trên probe tự sinh.
 
 # %% [markdown]
 # ## 3. TTL: câu trả lời cũ không tự biết mình cũ

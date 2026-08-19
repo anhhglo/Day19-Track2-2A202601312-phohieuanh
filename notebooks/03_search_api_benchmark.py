@@ -15,6 +15,7 @@
 
 # %%
 import _setup  # noqa: F401
+import socket
 import statistics
 import subprocess
 import time
@@ -27,26 +28,63 @@ import httpx
 #
 # Trong production thực tế, bạn sẽ chạy `make api` ở terminal riêng. Notebook
 # này khởi động uvicorn ở background subprocess và đợi `/healthz` trả ready.
+#
+# Port được **chọn động**: lấy 8000 nếu còn trống, không thì xin OS một port
+# tự do. Hard-code 8000 là một giả định về máy người khác — nếu port đó đã bị
+# service khác chiếm, uvicorn chết ngay còn vòng `/healthz` bên dưới lại đi
+# hỏi **nhầm service**, và cell chỉ hỏng sau 60 s với thông báo sai chỗ.
 
 # %%
+def free_port(preferred: int = 8000) -> int:
+    """`preferred` nếu bind được, không thì để OS cấp một port trống."""
+    for candidate in (preferred, 0):
+        with socket.socket() as s:
+            # No SO_REUSEADDR on purpose: it can let this probe bind
+            # 127.0.0.1:8000 while another process already listens on
+            # 0.0.0.0:8000, so the probe would report "free" and uvicorn would
+            # then fail. A TIME_WAIT false negative just falls through to an
+            # OS-assigned port, which costs nothing.
+            try:
+                s.bind(("127.0.0.1", candidate))
+            except OSError:
+                continue
+            return s.getsockname()[1]
+    raise RuntimeError("no free port")
+
+
 ROOT = Path(_setup.__file__).resolve().parent.parent
+PORT = free_port()
+print(f"API port: {PORT}")
 proc = subprocess.Popen(
-    ["uvicorn", "app.main:app", "--port", "8000", "--log-level", "warning"],
+    ["uvicorn", "app.main:app", "--port", str(PORT), "--log-level", "warning"],
     cwd=str(ROOT),
 )
 
-# Đợi server up + warm (Searcher.from_corpus loads embeddings + indexes 1000 docs)
-URL = "http://localhost:8000"
-for _ in range(60):
+# Đợi server up + warm. Startup = load model + embed và index 1000 doc, nên
+# deadline phải tính theo *máy chậm nhất*, không phải máy của người viết lab:
+# trên box này (CPU chia sẻ với các container khác) bước đó mất ~10 phút, còn
+# 60 s chỉ đủ cho một laptop rảnh. Và nếu uvicorn chết (port bận, import lỗi)
+# thì `proc.poll()` cho biết ngay, thay vì đợi hết deadline rồi báo "not ready"
+# — một thông báo trỏ sai tầng.
+URL = f"http://localhost:{PORT}"
+DEADLINE_S = 900
+t_start = time.perf_counter()
+ready = False
+while time.perf_counter() - t_start < DEADLINE_S:
+    if proc.poll() is not None:
+        raise RuntimeError(f"uvicorn thoát sớm với mã {proc.returncode} — xem log ở trên")
     try:
         r = httpx.get(f"{URL}/healthz", timeout=2.0)
         if r.status_code == 200 and r.json().get("ready"):
+            ready = True
             break
     except httpx.HTTPError:
         pass
-    time.sleep(1)
-else:
-    raise RuntimeError("API didn't become ready within 60s")
+    time.sleep(2)
+if not ready:
+    proc.terminate()
+    raise RuntimeError(f"API chưa ready sau {DEADLINE_S}s")
+print(f"ready sau {time.perf_counter() - t_start:.0f}s")
 
 print(httpx.get(f"{URL}/healthz").json())
 
@@ -70,12 +108,26 @@ for h in body["hits"][:3]:
 # (bao gồm network) — note: rubric assert P99 < 50ms áp dụng cho server-side.
 #
 # Output: bảng P50/P95/P99 cho 3 mode.
+#
+# **Warm-up là một phần của phép đo, không phải mẹo làm đẹp số.** Với 100 mẫu,
+# `percentile(0.99)` chính là *mẫu tệ nhất*, nên một request lạnh duy nhất
+# (ONNX session khởi tạo lazy, allocator chưa ổn định) quyết định toàn bộ con
+# số P99. Production đo tail latency ở trạng thái steady-state — instance mới
+# được warm trước khi load balancer đưa traffic vào — nên ta warm ở đây cho
+# phép đo trả lời đúng câu hỏi "hệ thống này chạy nhanh thế nào", chứ không
+# phải "lần gọi đầu tiên chậm thế nào". Cold start được đo riêng ở §2.
 
 # %%
 import json
 
 DATA = ROOT / "data"
 golden = [json.loads(l) for l in (DATA / "golden_set.jsonl").open(encoding="utf-8")]
+
+WARMUP = 10
+for mode in ("keyword", "semantic", "hybrid"):
+    for q in golden[:WARMUP]:
+        httpx.get(f"{URL}/search", params={"q": q["query"], "mode": mode})
+print(f"warm-up xong: {WARMUP} query × 3 mode")
 
 
 def percentile(values: list[float], p: float) -> float:

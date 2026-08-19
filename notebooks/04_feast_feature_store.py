@@ -181,11 +181,19 @@ else:
 # `(user_id, ts)`, lấy feature value tại ts đó (không dùng giá trị tương lai).
 # Đây là cơ chế chính để tránh training-serving skew (deck §6).
 
+# `make_user_profile()` ghi mỗi user một dòng tại `NOW - (i % 48) giờ`, tức
+# `u_000` lúc NOW, `u_001` lúc NOW-1h, `u_002` lúc NOW-2h… Vậy nên **thời điểm
+# hỏi phải nằm sau thời điểm feature được ghi**, đúng như production: feature
+# được tính trước, sự kiện cần chấm điểm xảy ra sau. Ở đây hỏi tại `NOW` cho cả
+# ba user, chênh nhau vài phút để entity_df không phải là một mốc duy nhất.
+
 # %%
 import pandas as pd
 entity_df = pd.DataFrame({
     "user_id": ["u_001", "u_002", "u_003"],
-    "event_timestamp": [NOW - timedelta(hours=2), NOW - timedelta(hours=1), NOW],
+    "event_timestamp": [NOW - timedelta(minutes=10),
+                        NOW - timedelta(minutes=5),
+                        NOW],
 })
 
 historical = fs.get_historical_features(
@@ -196,6 +204,34 @@ historical = fs.get_historical_features(
     ],
 ).to_df()
 print(historical)
+print(f"\nrows = {len(historical)}  ×  features = {historical.shape[1]}")
+assert len(historical) == len(entity_df), "PIT join đã đánh rơi entity row"
+
+# %% [markdown]
+# ### PIT join *đúng* nghĩa là gì — hỏi ngược về quá khứ
+#
+# Đây mới là phần đáng xem. `u_001` có feature được ghi lúc `NOW-1h`. Hỏi tại
+# `NOW-2h` — tức **trước khi feature đó tồn tại** — thì câu trả lời đúng là
+# *không có giá trị*, chứ không phải giá trị mới nhất.
+#
+# Một `GROUP BY user_id + MAX(timestamp)` sẽ vui vẻ trả về 187 wpm cho cả hai
+# mốc. Model học được một tín hiệu mà lúc serving nó **không thể** có → offline
+# đẹp, production tệ. Đó chính là rò rỉ mà NB8 §5 đo bằng AUC.
+
+# %%
+past_df = pd.DataFrame({
+    "user_id": ["u_001", "u_001"],
+    "event_timestamp": [NOW - timedelta(hours=2),   # TRƯỚC khi feature được ghi
+                        NOW],                        # SAU khi feature được ghi
+})
+past = fs.get_historical_features(
+    entity_df=past_df,
+    features=["user_profile_features:reading_speed_wpm"],
+).to_df().sort_values("event_timestamp")
+print(past.to_string(index=False))
+print(f"\nhỏi {len(past_df)} mốc → nhận {len(past)} dòng có giá trị.")
+print("Mốc NOW-2h nằm trước khi feature của u_001 được ghi, nên PIT join không "
+      "trả giá trị cho nó — Feast bỏ hẳn dòng đó thay vì điền giá trị tương lai.")
 
 # %% [markdown]
 # ## Deliverable evidence

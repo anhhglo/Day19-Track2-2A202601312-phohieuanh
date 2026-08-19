@@ -117,10 +117,32 @@ print(f"\nΔ recall vs single-shot:  tách câu {split - base:+.3f}   tách + fi
 # > Quy tắc rút ra: **classic RAG cho tra cứu đơn giản, agentic cho câu hỏi
 # > nhiều phần.** Đừng bật agentic cho mọi query.
 #
-# **Và hãy so hai dòng agentic với nhau.** Bật filter suy đoán làm *giảm* recall
-# so với chỉ tách câu — vì topic đoán từ keyword loại bỏ luôn những document liên
-# quan nằm ở cụm bên cạnh. Đổi lại, nó tốn ít call hơn. Đây đúng là bài học của
-# NB5 lặp lại ở tầng agent: **filter không miễn phí, phải đo chứ đừng đoán.**
+# **Và hãy so hai dòng agentic với nhau** — đây là chỗ rubric hỏi *vì sao*.
+#
+# `agentic (+filter)` **thấp hơn** `agentic (no filter)` ở cả recall lẫn balance.
+# Cơ chế: `RuleBasedPlanner.detect_topic()` đoán `topic` bằng cách dò keyword
+# (`TOPIC_HINTS` trong `app/agent.py`), rồi cái đoán đó trở thành một
+# `FieldCondition` **cứng** trong Qdrant. Ground truth của NB6 lại là top-8
+# brute-force **không filter** cho mỗi vế — nên mọi document đúng nhưng bị
+# `seed_corpus.py` gán sang cụm bên cạnh đều bị loại **trước khi** được xếp
+# hạng. Filter không hạ điểm chúng, nó xoá chúng khỏi danh sách.
+#
+# Điểm quan trọng: một keyword đoán sai đúng một lần là mất trọn một vế của câu
+# hỏi, và recall của vế đó về 0 — đó là lý do `balance` tụt mạnh hơn `recall`.
+#
+# **Sửa lại một câu trong bản gốc của lab.** Có thể nghĩ "đổi lại, filter tốn ít
+# call hơn". Số đo trên máy này nói ngược: **cả hai đều 2,3 call**, và bản có
+# filter **không nhanh hơn** — số call bằng nhau nên nó chỉ thêm điều kiện
+# payload vào mỗi lần gọi (lần đo này 60,2 ms so với 51,4 ms; hai lần chạy khác
+# nhau cho tỉ lệ khác nhau, nhưng chưa lần nào filter thắng về thời gian). Vậy
+# trên corpus này filter suy đoán là **lỗ thuần** —
+# mất recall mà không mua lại được gì. Đúng bài học NB5 lặp lại ở tầng agent:
+# **filter không miễn phí, phải đo chứ đừng đoán.**
+#
+# Khi nào filter *đáng* bật? Khi topic đến từ nguồn **chắc chắn** thay vì suy
+# đoán — ví dụ `topic_affinity` lấy từ feature store (§5 bên dưới), hay một
+# scope do người dùng chọn trên UI — hoặc khi corpus lớn tới mức chi phí quét
+# vượt quá phần recall bị mất.
 
 # %% [markdown]
 # ## 4. Reflection: filter tồi còn tệ hơn không filter

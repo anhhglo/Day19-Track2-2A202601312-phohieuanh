@@ -1,0 +1,108 @@
+feature store : Feast (app/feast_repo)
+embedding     : BAAI/bge-small-en-v1.5 (384d)
+episodic memory: 12 mục (10 của u_001)
+
+══════════════════════════════════════════════════════════════════════════════
+1. Tra cứu đơn giản (vector đủ)
+══════════════════════════════════════════════════════════════════════════════
+### Người dùng: u_001
+- ngôn ngữ ưa dùng : vi
+- tốc độ đọc       : 187 wpm
+- chủ đề quan tâm  : cloud
+- query 1 giờ qua  : 11
+- chủ đề 24h qua   : 4
+
+### Ký ức liên quan tới: 'Tôi đã đọc gì về Kubernetes?'
+    (RRF legs: BM25 + vector + profile[cloud])
+1. [read] Đã đọc: Kubernetes HPA tự động scale pod theo CPU và custom metric
+2. [read] Đã đọc: so sánh Karpenter và Cluster Autoscaler khi node pool co giãn
+3. [read] Đã đọc: mTLS giữa các service trong service mesh Istio
+4. [read] Đã đọc: RRF k=60 hợp nhất BM25 với vector search
+5. [read] Đã đọc: pgvector HNSW index và cách chọn ef_search
+
+══════════════════════════════════════════════════════════════════════════════
+2. Cần profile
+══════════════════════════════════════════════════════════════════════════════
+### Người dùng: u_001
+- ngôn ngữ ưa dùng : vi
+- tốc độ đọc       : 187 wpm
+- chủ đề quan tâm  : cloud
+- query 1 giờ qua  : 11
+- chủ đề 24h qua   : 4
+
+### Ký ức liên quan tới: 'Gợi ý tôi nên đọc gì tiếp theo'
+    (RRF legs: BM25 + vector + profile[cloud])
+1. [read] Đã đọc: mTLS giữa các service trong service mesh Istio
+2. [read] Đã đọc: so sánh Karpenter và Cluster Autoscaler khi node pool co giãn
+3. [read] Đã đọc: pgvector HNSW index và cách chọn ef_search
+4. [read] Đã đọc: Kubernetes HPA tự động scale pod theo CPU và custom metric
+5. [note] Ghi chú: Nghị định 13/2023 yêu cầu dữ liệu cá nhân của người dùng VN phải có cơ sở pháp lý xử lý rõ ràng
+
+══════════════════════════════════════════════════════════════════════════════
+3. Hoạt động gần đây
+══════════════════════════════════════════════════════════════════════════════
+### Người dùng: u_001
+- ngôn ngữ ưa dùng : vi
+- tốc độ đọc       : 187 wpm
+- chủ đề quan tâm  : cloud
+- query 1 giờ qua  : 11
+- chủ đề 24h qua   : 4
+
+### Ký ức liên quan tới: 'Dạo này tôi đang tập trung vào cái gì?'
+    (RRF legs: BM25 + vector + profile[cloud])
+1. [note] Ghi chú: spot instance rẻ hơn 70% nhưng phải chịu được interruption 2 phút
+2. [read] Đã đọc: mTLS giữa các service trong service mesh Istio
+3. [note] Ghi chú: Nghị định 13/2023 yêu cầu dữ liệu cá nhân của người dùng VN phải có cơ sở pháp lý xử lý rõ ràng
+4. [read] Đã đọc: so sánh Karpenter và Cluster Autoscaler khi node pool co giãn
+5. [query] Tìm kiếm: cách giảm chi phí hạ tầng khi traffic tăng đột biến
+
+══════════════════════════════════════════════════════════════════════════════
+4. Diễn đạt lại (vector thắng)
+══════════════════════════════════════════════════════════════════════════════
+### Người dùng: u_001
+- ngôn ngữ ưa dùng : vi
+- tốc độ đọc       : 187 wpm
+- chủ đề quan tâm  : cloud
+- query 1 giờ qua  : 11
+- chủ đề 24h qua   : 4
+
+### Ký ức liên quan tới: 'Tài liệu về mở rộng quy mô hạ tầng?'
+    (RRF legs: BM25 + vector + profile[cloud])
+1. [note] Ghi chú: Nghị định 13/2023 yêu cầu dữ liệu cá nhân của người dùng VN phải có cơ sở pháp lý xử lý rõ ràng
+2. [query] Tìm kiếm: cách giảm chi phí hạ tầng khi traffic tăng đột biến
+3. [note] Ghi chú: spot instance rẻ hơn 70% nhưng phải chịu được interruption 2 phút
+4. [read] Đã đọc: so sánh Karpenter và Cluster Autoscaler khi node pool co giãn
+5. [note] Ghi chú: bge-m3 đa ngữ tốt cho tiếng Việt nhưng nặng gấp 4 lần bge-small
+
+══════════════════════════════════════════════════════════════════════════════
+5. Hỗn hợp (hybrid + profile)
+══════════════════════════════════════════════════════════════════════════════
+### Người dùng: u_001
+- ngôn ngữ ưa dùng : vi
+- tốc độ đọc       : 187 wpm
+- chủ đề quan tâm  : cloud
+- query 1 giờ qua  : 11
+- chủ đề 24h qua   : 4
+
+### Ký ức liên quan tới: 'Tóm tắt về bảo mật trên cloud cho tôi'
+    (RRF legs: BM25 + vector + profile[cloud])
+1. [note] Ghi chú: spot instance rẻ hơn 70% nhưng phải chịu được interruption 2 phút
+2. [note] Ghi chú: bge-m3 đa ngữ tốt cho tiếng Việt nhưng nặng gấp 4 lần bge-small
+3. [read] Đã đọc: mTLS giữa các service trong service mesh Istio
+4. [read] Đã đọc: so sánh Karpenter và Cluster Autoscaler khi node pool co giãn
+5. [read] Đã đọc: Kubernetes HPA tự động scale pod theo CPU và custom metric
+
+══════════════════════════════════════════════════════════════════════════════
+Kiểm tra 1 — semantic cache có namespace (NB7)
+══════════════════════════════════════════════════════════════════════════════
+  cùng user hỏi lại        → HIT (tiết kiệm)
+  user khác hỏi y hệt      → MISS (đúng)
+  sau khi quá TTL 900 s    → MISS (đúng)   stale_evictions=1
+
+══════════════════════════════════════════════════════════════════════════════
+Kiểm tra 2 — cô lập ký ức giữa các user (filtered-ANN, NB5)
+══════════════════════════════════════════════════════════════════════════════
+  u_001 truy xuất 'doanh thu quý 3' → 0 ký ức của user khác (ĐẠT)
+  u_002 truy xuất cùng câu đó      → 2 ký ức, tất cả của chính mình: True
+
+Done.

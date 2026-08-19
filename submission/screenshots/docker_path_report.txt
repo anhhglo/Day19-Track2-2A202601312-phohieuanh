@@ -1,0 +1,59 @@
+Day 19 — báo cáo đường Docker (Qdrant server + Redis + Postgres)
+
+────────────────────────────────────────────────────────────────────────
+1. Ba service của stack production
+────────────────────────────────────────────────────────────────────────
+  Qdrant   http://localhost:6333            OK   collections=[]
+  Redis    localhost:6382                       OK   v7.4.10
+  Postgres localhost:5432                       OK   PostgreSQL 16.15 on x86_64-pc-linux-musl
+
+────────────────────────────────────────────────────────────────────────
+2. Feast trên Redis (online) + Postgres (offline)
+────────────────────────────────────────────────────────────────────────
+  item_popularity         1000 rows -> postgres
+  query_velocity           100 rows -> postgres
+  user_profile             100 rows -> postgres
+
+  $ feast apply  -> rc=0
+      No project found in the repository. Using project name lab19docker defined in feature_store.yaml
+      Applying changes for project lab19docker
+      Deploying infrastructure for query_velocity_features
+      Deploying infrastructure for item_popularity_features
+      Deploying infrastructure for user_profile_features
+
+  $ feast materialize-incremental 2026-08-19T11:08:40  -> rc=0
+      Materializing [1m[32m3[0m feature views to [1m[32m2026-08-19 11:08:40+00:00[0m into the [1m[32mredis[0m online store.
+      
+      [1m[32mquery_velocity_features[0m from [1m[32m2026-08-19 10:08:44+00:00[0m to [1m[32m2026-08-19 11:08:40+00:00[0m:
+      [1m[32mitem_popularity_features[0m from [1m[32m2026-08-18 11:08:44+00:00[0m to [1m[32m2026-08-19 11:08:40+00:00[0m:
+      [1m[32muser_profile_features[0m from [1m[32m2026-07-20 11:08:44+00:00[0m to [1m[32m2026-08-19 11:08:40+00:00[0m:
+
+  get_online_features(u_001) = {'user_id': 'u_001', 'topic_affinity': 'cloud', 'reading_speed_wpm': 187, 'queries_last_hour': 11}
+
+  Redis online lookup, 100 call:  P50=0.65ms  P95=0.96ms  P99=1.11ms
+
+────────────────────────────────────────────────────────────────────────
+3. Tìm kiếm trên Qdrant server (QDRANT_MODE=server)
+────────────────────────────────────────────────────────────────────────
+  indexed 1000 docs vào Qdrant server in 130.2s
+
+  mode           P@10       P50       P99
+  keyword      77.8%      0.5ms      0.8ms
+  semantic     73.2%     23.4ms     31.8ms
+  hybrid       78.6%     24.9ms     33.6ms
+
+────────────────────────────────────────────────────────────────────────
+4. Lite so với Docker — cùng phép đo, khác hạ tầng
+────────────────────────────────────────────────────────────────────────
+  Feast online lookup P99:
+    SQLite (lite, xem NB4) : 1.35 ms   — file cục bộ, một process đọc được
+    Redis  (docker)        : 1.11 ms   — qua TCP, mọi replica dùng chung
+
+  Vector search P99 (in-process client -> Qdrant server, không qua HTTP API):
+    keyword        0.8 ms   P@10 77.8%
+    semantic      31.8 ms   P@10 73.2%
+    hybrid        33.6 ms   P@10 78.6%
+
+  Chất lượng không đổi giữa hai path — đúng như mong đợi: đổi nơi cất
+  vector không đổi vector. Cái đổi là độ bền, khả năng chia sẻ và
+  một chặng mạng thêm vào mỗi lần đọc.

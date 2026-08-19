@@ -18,6 +18,7 @@ import _setup  # noqa: F401  -- adds repo root to sys.path
 import json
 from pathlib import Path
 
+from app.embeddings import embed_threads
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
@@ -51,8 +52,16 @@ print(json.dumps(docs[0], ensure_ascii=False, indent=2))
 # > Cho lab này dùng `bge-small-en` để mọi laptop chạy được nhanh.
 
 # %%
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+# `threads=` không phải chi tiết vặt. ONNX Runtime mặc định mở một thread
+# intra-op cho mỗi core; model này quá nhỏ để lấp đầy 20 core, nên chi phí
+# fan-out/join lấn át chính phép nhân ma trận. Đo trên máy này: chặn ở 8
+# thread làm index 1000 doc nhanh hơn (~129 s so với ~199 s) VÀ hạ p99 của
+# một query từ 54 ms xuống 29 ms. Xem `app/embeddings.py`.
+EMBED_THREADS = embed_threads()
+embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5",
+                         threads=EMBED_THREADS)
 sample = list(embedder.embed(["cloud computing tiếng Việt"]))[0]
+print(f"ONNX intra-op threads: {EMBED_THREADS} (máy có {__import__('os').cpu_count()} core)")
 print(f"Vector dim: {len(sample)}")
 print(f"First 8 values: {sample[:8].tolist()}")
 

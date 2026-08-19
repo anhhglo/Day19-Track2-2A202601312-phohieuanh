@@ -1,0 +1,35 @@
+Embedding ablation — 50 golden queries, Precision@10
+==============================================================================
+
+── fastembed: BAAI/bge-small-en-v1.5 (384d) ──
+   indexed 1000 docs in 134.6s
+
+── multilingual-small: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384d) ──
+Fetching 5 files:   0%|          | 0/5 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 5 files:  20%|██        | 1/5 [00:00<00:02,  1.92it/s]Fetching 5 files:  60%|██████    | 3/5 [00:00<00:00,  3.78it/s]Fetching 5 files:  80%|████████  | 4/5 [00:16<00:05,  5.45s/it]Fetching 5 files: 100%|██████████| 5/5 [00:23<00:00,  6.02s/it]Fetching 5 files: 100%|██████████| 5/5 [00:23<00:00,  4.66s/it]
+   indexed 1000 docs in 120.4s
+
+
+Precision@10 — trung bình toàn bộ golden set
+backend                 dim   keyword  semantic   hybrid
+fastembed               384    77.8%     73.2%    78.6%
+multilingual-small      384    77.8%     75.8%    80.6%
+
+Precision@10 — theo loại query (đây mới là chỗ model lộ ra)
+slice       backend                  keyword  semantic   hybrid
+exact       fastembed                 96.7%     88.7%    96.7%
+exact       multilingual-small        96.7%     90.0%    98.0%
+
+paraphrase  fastembed                 33.3%     24.0%    32.0%
+paraphrase  multilingual-small        33.3%     48.0%    44.0%
+
+mixed       fastembed                 97.0%     98.5%   100.0%
+mixed       multilingual-small        97.0%     86.0%    95.0%
+
+Latency in-process (không qua HTTP) — giá phải trả cho chất lượng
+backend                  sem P50   sem P99   hyb P50   hyb P99    index
+fastembed                  22.8ms     32.7ms     24.1ms     33.8ms     135s
+multilingual-small         20.6ms     23.7ms     22.0ms     30.7ms     120s
+
+Δ paraphrase / semantic : +24.0%
+Δ hybrid P99            : -3.0ms

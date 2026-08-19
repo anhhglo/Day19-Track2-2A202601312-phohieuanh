@@ -33,7 +33,7 @@ docker = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["app", "scripts"]
+testpaths = ["tests"]        # was ["app","scripts"] -> collected 0 tests; the suite lives in tests/
 python_files = ["test_*.py"]
 
 [tool.ruff]
