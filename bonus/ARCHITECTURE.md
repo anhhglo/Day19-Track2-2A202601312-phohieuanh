@@ -1,7 +1,11 @@
 # Hybrid Memory — kiến trúc bộ nhớ cho trợ lý AI cá nhân (tiếng Việt)
 
-**Bonus challenge, Lab 19 Track 2.** POC chạy được: `python bonus/demo.py`.
-Code: [`bonus/agent.py`](agent.py) · [`bonus/demo.py`](demo.py).
+**Bonus challenge, Lab 19 Track 2.** Làm một mình (không pair).
+POC chạy được: `python bonus/demo.py` · đo đạc: `python bonus/eval.py`.
+Code: [`bonus/agent.py`](agent.py) · [`bonus/demo.py`](demo.py) · [`bonus/eval.py`](eval.py).
+
+> §5 là phần đáng đọc nhất: nó **bác bỏ hai luận điểm** mà chính tài liệu này
+> đưa ra trước khi tôi đo, và ghi lại một lỗi mất dữ liệu do phép đo lòi ra.
 
 Trợ lý cần nhớ ba thứ có **chu kỳ thay đổi khác nhau ba bậc độ lớn**, và chính
 sự khác nhau đó — chứ không phải "vector store thì hay" — là lý do kiến trúc
@@ -133,9 +137,12 @@ Chọn **một collection + filtered-ANN theo `user_id`**, và coi đó là isol
   một câu. Embedder tiếng Anh (`bge-small-en`) bắt được "scale/cluster" nhưng
   trôi ở phần tiếng Việt — đúng hiện tượng NB2 đo. Nên POC **luôn chạy hybrid
   BM25 + vector với RRF k=60**: BM25 giữ được token chữ-cho-chữ (`Kubernetes`,
-  `pgvector`, `Nghị định 13`) mà embedder bỏ; vector giữ được diễn đạt lại.
-  Production nên chuyển `EMBEDDING_BACKEND=bge-m3` — code đã sẵn sàng, `dim` lấy
-  từ model chứ không hard-code.
+  `pgvector`, `Nghị định 13`) mà embedder bỏ.
+  **Đã đo (§5): hybrid thắng đúng ở lát cắt chuyển mã — 91,7% so với 83,3%.**
+  Nhưng nửa sau của câu trên thì **sai**: vector *không* cứu được diễn đạt lại,
+  nó là chiến lược **tệ nhất** ở lát đó (66,7%). Production nên chuyển
+  `EMBEDDING_BACKEND=bge-m3` hoặc `multilingual-small` — code đã sẵn sàng, `dim`
+  lấy từ model chứ không hard-code.
 - **Tokenizer.** Hiện dùng `text.lower().split()` cho BM25 — sai với tiếng Việt
   vì "cơ sở dữ liệu" là *một* từ ba âm tiết, tách theo khoảng trắng thành ba
   token vô nghĩa. Đánh đổi: `pyvi`/`underthesea` tách từ đúng nhưng thêm ~200 MB
@@ -152,21 +159,110 @@ Chọn **một collection + filtered-ANN theo `user_id`**, và coi đó là isol
 
 ---
 
-## 5. POC này **chưa** xử lý
+## 5. Đo đạc — và hai luận điểm của chính tài liệu này bị bác bỏ
+
+`python bonus/eval.py` · golden set 20 ký ức × 12 truy vấn, Recall@5, cùng ngân
+sách top-5 cho mọi chiến lược. Output đầy đủ:
+[`submission/screenshots/bonus_eval.txt`](../submission/screenshots/bonus_eval.txt).
+
+| chiến lược | tổng | chuyển mã | diễn đạt lại |
+|---|---|---|---|
+| bm25 đơn | **87,5%** | 83,3% | **91,7%** |
+| vector đơn | 75,0% | 83,3% | 66,7% |
+| hybrid (RRF) | **87,5%** | **91,7%** | 83,3% |
+| hybrid + profile | **87,5%** | **91,7%** | 83,3% |
+
+**Bác bỏ #1 — "hybrid thắng mọi thứ".** Trên corpus trí nhớ này hybrid **hoà**
+với BM25 đơn ở tổng thể (87,5%). Nó chỉ thắng ở lát cắt **chuyển mã**
+(91,7% vs 83,3%) và *thua* ở lát **diễn đạt lại** (83,3% vs 91,7%), vì fusion
+kéo kết quả yếu của vector lên. Trung bình cộng che mất cả hai chiều — đúng
+bài học bảng slice của NB2, lặp lại ở tầng trí nhớ cá nhân.
+
+**Bác bỏ #2 — "leg profile giúp xếp hạng tốt hơn".** Nó cho **đúng con số**
+với hybrid ở cả ba cột. Golden set này gồm toàn truy vấn *có* ý định rõ ràng,
+mà leg profile sinh ra cho truy vấn *không* có ý định ("gợi ý tôi nên đọc gì
+tiếp theo" — thấy rõ hiệu ứng trong `demo.py`). Vậy nên đây là **chưa chứng
+minh được**, không phải "đã chứng minh". Muốn kết luận thì phải có golden set
+cho truy vấn mơ hồ, và ground truth loại đó cần người thật gán nhãn.
+
+**Điều bảng này *có* chứng minh:** vector đơn là lựa chọn tệ nhất cho tiếng
+Việt với embedder tiếng Anh (75,0%), và **BM25 rẻ tiền là baseline mạnh đến
+mức bất ngờ** — dựng vector store trước khi đo BM25 là bỏ tiền mua thứ có thể
+không cần.
+
+### Decay và consolidation
+
+* **Decay** (nửa đời 30 ngày): ghi chú "giá GPU 3 USD/giờ" 400 ngày tuổi rơi
+  **hẳn khỏi top-5**, bản 2 ngày tuổi giữ hạng 1. Tắt decay thì bản cũ vẫn nằm
+  hạng 2 — chiếm một slot để nói một con số đã sai.
+* **Consolidation**: với truy vấn *thật sự* kéo nhóm trùng về (`"spot
+  instance"`), số **sự thật riêng biệt** trong top-5 đi từ **2/5 lên 5/5** sau
+  khi gộp 4 bản thành 1. Nhưng với truy vấn không kéo nhóm trùng về thì 5/5 →
+  5/5: lúc đó gộp chỉ mua **dung lượng**, không mua **ngữ cảnh**. Luận điểm
+  đúng, phạm vi hẹp hơn tôi tưởng lúc viết.
+
+### Một lỗi thật do chính phép đo lòi ra
+
+Lần chạy đầu, `consolidate()` nuốt mất một ký ức:
+
+```
+"giá thuê GPU A100 khoảng 3 USD mỗi giờ"   (400 ngày trước)
+"giá thuê GPU A100 khoảng 2 USD mỗi giờ"   (2 ngày trước)
+```
+
+Hai chuỗi lệch **đúng một ký tự** nên cosine ≈ 0,99 — nâng ngưỡng không cứu
+được, vì độ tương đồng ngữ nghĩa **không phân biệt được** "cùng ý, khác chữ"
+với "cùng ý, **khác số**". Sửa bằng `_cung_so()`: không bao giờ gộp hai ký ức
+có dãy chữ số khác nhau. Đây đúng là luận điểm trung tâm của cả lab hôm nay —
+**số phải so chính xác, không bao giờ so bằng độ tương đồng** — chỉ là lần này
+nó cắn ở tầng trí nhớ thay vì tầng FactChecker.
+
+## 6. POC này **chưa** xử lý
 
 - **Cô lập là mềm.** Một filter bị quên ở bất kỳ đường truy vấn nào là rò dữ
   liệu giữa user. Production cần cô lập ở tầng thấp hơn (row-level security /
   collection theo tenant lớn) cộng test hồi quy chạy mọi truy vấn với filter
   chặt — đúng bài học "test trước khi lên production" của NB5.
 - **Không mã hoá at-rest, không audit log.** Nghị định 13 cần cả hai.
-- **Không có memory decay.** Ký ức 2 năm trước cạnh tranh ngang hàng với ký ức
-  hôm qua. Cần recency boost hoặc TTL/archive; chưa đo nên chưa làm.
-- **Không consolidation.** 5 ký ức gần trùng nhau vẫn chiếm 5 slot trong top-K.
+- **Decay dùng một hằng số chưa hiệu chỉnh.** Nửa đời 30 ngày là con số tôi
+  *chọn*, không phải con số tôi *đo* — đúng loại sai lầm mà NB7 chỉ ra với
+  ngưỡng 0,75 của AWS. Muốn có con số thật phải sweep nửa đời trên tập truy vấn
+  có nhãn "nhạy thời gian / không nhạy thời gian", tập đó chưa có.
+- **Consolidation không hiểu phủ định.** `_cung_so()` chặn được ca khác số,
+  nhưng "spot instance **phù hợp** cho batch job" và "spot instance **không
+  phù hợp** cho batch job" có cùng dãy số và cosine rất cao — vẫn bị gộp. Cần
+  NLI hoặc mô hình phát hiện mâu thuẫn; ngoài phạm vi một POC chạy offline.
 - **Chưa có LLM thật.** `recall()` dừng ở chuỗi context; planner là rule-based
   (như NB6) nên demo chạy không cần API key.
 - **BM25 dựng lại toàn bộ mỗi lần `remember()`.** O(n) trên mỗi lần ghi — chấp
   nhận được với vài nghìn ký ức, phải đổi sang index tăng dần (hoặc Qdrant
   sparse vector) trước khi lên thật.
-- **Số liệu chưa được đo.** Chưa có golden set cho recall của memory. Đó là việc
-  đầu tiên phải làm tiếp — mọi con số trong tài liệu này là suy luận từ các phép
-  đo của NB2/NB5/NB7 trên corpus lab, không phải đo trên workload thật.
+- **Golden set là do tôi tự viết, 20 ký ức và 12 truy vấn.** Đủ để bác bỏ hai
+  luận điểm (§5) nhưng quá nhỏ để *khẳng định* điều gì: một truy vấn đổi kết quả
+  làm dịch 8,3 điểm phần trăm. Nhãn cũng do chính người viết ký ức gán, nên có
+  thiên lệch. Bước tiếp theo là log truy vấn thật + người thứ hai gán nhãn độc
+  lập, không phải thêm ký ức tổng hợp.
+- **Chưa đo trên `multilingual-small`.** Ablation ở `scripts/embedding_ablation.py`
+  cho thấy model đa ngữ nhân đôi recall diễn đạt lại trên corpus lab; rất có thể
+  nó đảo ngược kết luận "vector đơn tệ nhất" ở §5, nhưng **tôi chưa chạy**, nên
+  không viết vào như thể đã biết.
+
+---
+
+## 7. Nhật ký vibe-coding (~100 chữ, không tính điểm)
+
+**Prompt hiệu quả nhất** là prompt *từ chối* nhận câu trả lời: "viết golden set
+đo 4 chiến lược truy xuất, và **nếu hybrid thua thì báo cáo đúng như thế**".
+Chính nó lòi ra hai luận điểm sai trong bản nháp §4 và lỗi `consolidate()` nuốt
+mất ghi chú giá GPU. Nếu chỉ hỏi "viết agent hybrid memory" thì đã nhận được
+code chạy được kèm README khẳng định hybrid thắng — nghe hợp lý, và sai.
+
+**Prompt thất bại**: "tối ưu retrieval cho tiếng Việt". Quá mơ hồ nên nhận lại
+một danh sách mẹo chung chung (dùng bge-m3, thêm reranker, tăng top-K) không có
+cái nào gắn với corpus này. Chỉ khi nêu rõ *ràng buộc* — 384 chiều, chạy offline,
+so trên chính golden set này — thì đề xuất mới kiểm chứng được.
+
+**Bài học:** giao cho AI phần *cơ khí* (vòng lặp RRF, bảng in, boilerplate
+Qdrant) và tự giữ phần *định nghĩa đúng-sai* — ground truth, lát cắt, điều gì
+sẽ chứng minh mình sai. Đó đúng là ranh giới mà callout vibe-coding trong NB5
+và NB6 vạch ra.

@@ -44,7 +44,15 @@ cả hai chiều.
 ## Bonus challenge
 
 - [x] Đã làm bonus (xem [`bonus/ARCHITECTURE.md`](../bonus/ARCHITECTURE.md))
-- [ ] Pair work với: —
+- [ ] Pair work với: — (làm một mình)
+
+`bonus/eval.py` là phần tôi thấy đáng nhất: golden set 20 ký ức × 12 truy vấn
+**bác bỏ hai luận điểm** tôi đã viết trong ARCHITECTURE.md trước khi đo — hybrid
+chỉ *hoà* với BM25 đơn ở tổng thể (87,5%), và leg profile không đổi được con số
+nào. Nó cũng lòi ra một lỗi mất dữ liệu: `consolidate()` gộp
+*"giá GPU 3 USD/giờ"* với *"giá GPU 2 USD/giờ"* vì cosine ≈ 0,99, tức **xoá mất
+một sự thật**. Nâng ngưỡng không cứu được — phải chặn bằng so khớp chữ số
+chính xác. Đúng bài học của cả lab, chỉ là cắn ở tầng khác.
 
 ---
 

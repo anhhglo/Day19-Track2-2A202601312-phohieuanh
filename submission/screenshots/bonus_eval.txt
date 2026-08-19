@@ -1,0 +1,34 @@
+Golden set trí nhớ — 20 ký ức, 12 truy vấn, Recall@5
+embedding : BAAI/bge-small-en-v1.5 (384d)
+affinity  : cloud
+==============================================================================
+
+chiến lược            tổng       chuyen_ma    dien_dat_lai
+bm25 đơn            87.5%          83.3%           91.7% 
+vector đơn          75.0%          83.3%           66.7% 
+hybrid (RRF)        87.5%          91.7%           83.3% 
+hybrid+profile      87.5%          91.7%           83.3% 
+
+  → tốt nhất: bm25 đơn (87.5%)
+
+==============================================================================
+2. Memory decay — cùng chủ đề, khác tuổi
+==============================================================================
+  tắt decay                      ghi chú 2 ngày tuổi ở hạng 1, ghi chú 400 ngày tuổi ở hạng 2
+  bật decay (nửa đời 30 ngày)    ghi chú 2 ngày tuổi ở hạng 1, ghi chú 400 ngày tuổi ở hạng None
+
+==============================================================================
+3. Consolidation — top-K là ngân sách cố định
+==============================================================================
+  ký ức sống       : 25 → 22  (gộp 3)
+  top-5 cho 'spot instance':
+    sự thật riêng biệt TRƯỚC khi gộp : 2/5
+    sự thật riêng biệt SAU khi gộp   : 5/5
+    giữ lại (gộp 4 bản): Ghi chú: spot instance rẻ hơn 70% nhưng phải chịu interruption…
+
+  Hàng rào con số — hai ghi chú giá GPU (3 USD / 2 USD, cosine ≈ 0,99):
+    còn sống: Ghi chú: giá thuê GPU A100 khoảng 3 USD mỗi giờ
+    còn sống: Ghi chú: giá thuê GPU A100 khoảng 2 USD mỗi giờ
+    → cả hai còn sống: True  (trước khi thêm `_cung_so()` thì một cái bị nuốt)
+
+Xong.

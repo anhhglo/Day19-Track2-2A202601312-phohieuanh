@@ -5,7 +5,12 @@ lessons applied rather than restated:
 
   NB2  RRF hybrid          — BM25 catches the literal token (`Kubernetes`,
                              `bge-m3`, `Nghị định 13`) that an English-trained
-                             embedder drops; vector catches the paraphrase.
+                             embedder drops. MEASURED in bonus/eval.py: hybrid
+                             wins the code-switched slice (91.7% vs 83.3%) but
+                             only TIES bm25 overall, and vector alone is the
+                             worst strategy on Vietnamese paraphrase (66.7%).
+                             The textbook "vector catches the paraphrase" does
+                             NOT hold with an English model on Vietnamese.
   NB5  filtered-ANN        — the `user_id` filter goes INSIDE the Qdrant query,
                              never as a post-filter. Post-filtering a per-user
                              memory store is both a recall bug and, at k=10 with
@@ -20,6 +25,7 @@ Run the demo:  python bonus/demo.py
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -39,6 +45,17 @@ from app.embeddings import Embedder  # noqa: E402
 MEMORY_COLLECTION = "bonus_episodic_memory"
 RRF_K = 60
 
+_CHU_SO = re.compile(r"\d+")
+
+
+def _cung_so(a: str, b: str) -> bool:
+    """True khi hai văn bản mang đúng cùng một dãy chữ số.
+
+    Hàng rào cho consolidate(): hai câu chỉ khác nhau ở con số là hai SỰ THẬT
+    khác nhau, dù cosine của chúng gần 1.0.
+    """
+    return _CHU_SO.findall(a) == _CHU_SO.findall(b)
+
 
 @dataclass
 class Memory:
@@ -47,6 +64,10 @@ class Memory:
     text: str
     kind: str          # note | read | query
     ts: float
+    # >1 after consolidate() folded near-duplicates into this one. Kept as a
+    # count rather than deleting silently: "you saved this 4 times" is signal.
+    merged_count: int = 1
+    alive: bool = True
 
 
 @dataclass
@@ -75,6 +96,7 @@ class HybridMemoryAgent:
         client: QdrantClient | None = None,
         cache_threshold: float = 0.85,
         cache_ttl_s: float | None = 900.0,
+        half_life_days: float | None = 30.0,
     ) -> None:
         self.embedder = Embedder()
         self.client = client or QdrantClient(":memory:")
@@ -87,9 +109,15 @@ class HybridMemoryAgent:
             vectors_config=VectorParams(size=self.embedder.dim, distance=Distance.COSINE),
         )
         self.memories: list[Memory] = []
+        self._vectors: dict[int, list[float]] = {}   # for consolidate()
         self._bm25: BM25Okapi | None = None
         self._bm25_dirty = True
         self.feature_store = feature_store
+        # Memory decay. A two-year-old note should not outrank yesterday's on a
+        # tie -- but half-life is a *knob*, not a truth: set it too short and
+        # "what did I read about Kubernetes last year" stops working. Measured
+        # in bonus/eval.py rather than asserted; None disables it entirely.
+        self.half_life_days = half_life_days
         # 0.85, not the 0.75 AWS headline: NB7's sweep showed 0.75 still serves
         # a measurable share of wrong answers on this corpus. Personal memory
         # is exactly where a wrong-but-fluent answer is most damaging.
@@ -103,14 +131,19 @@ class HybridMemoryAgent:
         )
 
     # ── write path ──────────────────────────────────────────────────────
-    def remember(self, text: str, user_id: str = "u_001", kind: str = "note") -> None:
-        """Add one piece of episodic memory for this user."""
+    def remember(self, text: str, user_id: str = "u_001", kind: str = "note",
+                 ts: float | None = None) -> None:
+        """Add one piece of episodic memory for this user.
+
+        `ts` is injectable so decay can be tested without waiting weeks -- the
+        same trick app/cache.py uses for TTL with its virtual clock.
+        """
         mem = Memory(
             memory_id=len(self.memories),
             user_id=user_id,
             text=text,
             kind=kind,
-            ts=time.time(),
+            ts=time.time() if ts is None else ts,
         )
         vector = next(self.embedder.embed([text])).tolist()
         self.client.upsert(
@@ -122,6 +155,7 @@ class HybridMemoryAgent:
             )],
         )
         self.memories.append(mem)
+        self._vectors[mem.memory_id] = vector
         self._bm25_dirty = True
 
     # ── retrieval ───────────────────────────────────────────────────────
@@ -138,7 +172,8 @@ class HybridMemoryAgent:
         if self._bm25 is None or not self.memories:
             return []
         scores = self._bm25.get_scores(query.lower().split())
-        mine = [m.memory_id for m in self.memories if m.user_id == user_id]
+        mine = [m.memory_id for m in self.memories
+                if m.user_id == user_id and m.alive]
         return sorted(mine, key=lambda i: -scores[i])[:depth]
 
     def _vector_ids(self, query: str, user_id: str, depth: int) -> list[int]:
@@ -156,7 +191,10 @@ class HybridMemoryAgent:
         return [int(p.id) for p in pts]
 
     def search_memories(self, query: str, user_id: str, top_k: int = 5,
-                        affinity: str | None = None) -> list[Memory]:
+                        affinity: str | None = None,
+                        legs: tuple[str, ...] = ("bm25", "vector", "profile"),
+                        use_decay: bool = True,
+                        now_ts: float | None = None) -> list[Memory]:
         """Hybrid RRF over this user's memories only.
 
         Two retrievers always (BM25 + vector). A THIRD leg joins the fusion when
@@ -168,18 +206,100 @@ class HybridMemoryAgent:
 
         RRF is what makes a third leg cheap: it fuses *ranks*, so a new
         retriever needs no score calibration against the other two.
+
+        `legs` is a parameter rather than a constant so bonus/eval.py can score
+        each strategy against the same golden set -- claiming hybrid wins here
+        without measuring it would repeat exactly the mistake NB6 warns about.
         """
         depth = max(top_k * 5, 25)
-        legs = [self._keyword_ids(query, user_id, depth),
-                self._vector_ids(query, user_id, depth)]
-        if affinity:
-            legs.append(self._vector_ids(f"{query} {affinity}", user_id, depth))
+        ids_by_leg: list[list[int]] = []
+        for leg in legs:
+            if leg == "bm25":
+                ids_by_leg.append(self._keyword_ids(query, user_id, depth))
+            elif leg == "vector":
+                ids_by_leg.append(self._vector_ids(query, user_id, depth))
+            elif leg == "profile" and affinity:
+                ids_by_leg.append(self._vector_ids(f"{query} {affinity}",
+                                                   user_id, depth))
+            elif leg not in ("bm25", "vector", "profile"):
+                raise ValueError(f"unknown leg {leg!r}")
+
         rrf: dict[int, float] = {}
-        for ids in legs:
+        for ids in ids_by_leg:
             for rank, mid in enumerate(ids, start=1):     # rank is 1-based
                 rrf[mid] = rrf.get(mid, 0.0) + 1.0 / (RRF_K + rank)
+
+        if use_decay and self.half_life_days:
+            now = now_ts if now_ts is not None else time.time()
+            for mid in list(rrf):
+                age_days = max(0.0, (now - self.memories[mid].ts) / 86400.0)
+                rrf[mid] *= 0.5 ** (age_days / self.half_life_days)
+
         best = sorted(rrf.items(), key=lambda kv: -kv[1])[:top_k]
         return [self.memories[mid] for mid, _ in best]
+
+    # ── consolidation ───────────────────────────────────────────────────
+    def consolidate(self, user_id: str, threshold: float = 0.92) -> int:
+        """Fold near-duplicate memories into their newest copy.
+
+        Why it matters for retrieval, not just storage: top-K is a fixed
+        budget. Five phrasings of "spot instance rẻ hơn nhưng bị interrupt"
+        eat five of the five slots, and the LLM gets one fact instead of five.
+        Deduplicating BUYS CONTEXT -- that is the argument, and eval.py checks
+        whether it actually pays.
+
+        Rule-based on purpose: an LLM summariser would be stronger but needs a
+        key, and the whole POC runs offline. Cosine over vectors we already
+        have costs nothing.
+
+        MEASURED FAILURE, kept as a guard: cosine cannot tell "same statement,
+        different wording" from "same statement, DIFFERENT NUMBER". The first
+        run of bonus/eval.py folded
+
+            "giá thuê GPU A100 khoảng 3 USD mỗi giờ"   (400 ngày trước)
+            "giá thuê GPU A100 khoảng 2 USD mỗi giờ"   (2 ngày trước)
+
+        into one and deleted a fact. Those two strings differ by a single
+        character, so their cosine is ~0.99 — raising the threshold cannot fix
+        it, only a non-semantic check can. Hence `_cung_so()`: two memories are
+        never merged when their digit sequences differ. Same lesson as the
+        whole lab — numbers get compared exactly, never by similarity.
+
+        Returns how many memories were folded away.
+        """
+        import numpy as np
+
+        live = [m for m in self.memories if m.user_id == user_id and m.alive]
+        if len(live) < 2:
+            return 0
+        mat = np.asarray([self._vectors[m.memory_id] for m in live], dtype=np.float32)
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        sim = (mat / norms) @ (mat / norms).T
+
+        # Newest wins: it is the phrasing the user most recently chose.
+        order = sorted(range(len(live)), key=lambda i: -live[i].ts)
+        folded, absorbed = 0, set()
+        for a in order:
+            if a in absorbed:
+                continue
+            for b in order:
+                if b == a or b in absorbed:
+                    continue
+                if sim[a, b] >= threshold and _cung_so(live[a].text, live[b].text):
+                    absorbed.add(b)
+                    live[a].merged_count += live[b].merged_count
+                    live[b].alive = False
+                    folded += 1
+
+        if folded:
+            self.client.delete(
+                collection_name=MEMORY_COLLECTION,
+                points_selector=models.PointIdsList(
+                    points=[live[i].memory_id for i in absorbed]),
+            )
+            self._bm25_dirty = True
+        return folded
 
     # ── profile ─────────────────────────────────────────────────────────
     def profile(self, user_id: str) -> dict[str, Any]:
